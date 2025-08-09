@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   AppBar,
   Toolbar,
@@ -619,6 +619,108 @@ const MoodDashboard = () => {
   const [personalizedChallenges, setPersonalizedChallenges] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const navigate = useNavigate();
+  const [activeTimers, setActiveTimers] = useState({});
+  const [completedChallenges, setCompletedChallenges] = useState([]);
+  const completedChallengesRef = useRef(completedChallenges);
+
+
+  const startTimer = (challengeId, duration) => {
+    // Clear any existing timer for this challenge
+    setActiveTimers(prev => {
+      const updatedTimers = { ...prev };
+      delete updatedTimers[challengeId];
+      return updatedTimers;
+    });
+
+    // Remove from completed if it's there
+    setCompletedChallenges(prev => prev.filter(id => id !== challengeId));
+
+    // Convert duration to seconds
+    const timeRemaining = duration * 60;
+
+    // Create a new timer
+    const newTimer = {
+      startTime: Date.now(),
+      endTime: Date.now() + timeRemaining * 1000,
+      timeRemaining,
+    };
+
+    // Add to active timers
+    setActiveTimers(prev => ({
+      ...prev,
+      [challengeId]: newTimer
+    }));
+  };
+
+  // Function to format time as MM:SS
+  const formatTime = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+
+  useEffect(() => {
+    completedChallengesRef.current = completedChallenges;
+  }, [completedChallenges]);
+
+  
+  // Effect to update active timers
+  useEffect(() => {
+    const timerInterval = setInterval(() => {
+      const now = Date.now();
+      let activeTimersUpdated = false;
+      const newCompletedChallenges = [];
+
+      // Create a new object for activeTimers to ensure proper reference
+      const updatedActiveTimers = { ...activeTimers };
+
+      // Check each timer
+      Object.keys(updatedActiveTimers).forEach(challengeId => {
+        const timer = updatedActiveTimers[challengeId];
+
+        if (timer && now >= timer.endTime) {
+          // Timer has finished - mark as completed
+          newCompletedChallenges.push(challengeId);
+          delete updatedActiveTimers[challengeId];
+          activeTimersUpdated = true;
+        } else if (timer && now < timer.endTime) {
+          // Update time remaining
+          const timeRemaining = Math.floor((timer.endTime - now) / 1000);
+          if (timer.timeRemaining !== timeRemaining) {
+            updatedActiveTimers[challengeId] = {
+              ...timer,
+              timeRemaining
+            };
+            activeTimersUpdated = true;
+          }
+        }
+      });
+
+      // Update active timers if needed
+      if (activeTimersUpdated) {
+        setActiveTimers(updatedActiveTimers);
+      }
+
+      // Update completed challenges if there are any
+      if (newCompletedChallenges.length > 0) {
+        setCompletedChallenges(prev => {
+          // Create a new array without duplicates
+          const uniqueCompleted = [...prev];
+          newCompletedChallenges.forEach(id => {
+            if (!uniqueCompleted.includes(id)) {
+              uniqueCompleted.push(id);
+            }
+          });
+          return uniqueCompleted;
+        });
+      }
+    }, 1000);
+
+    return () => clearInterval(timerInterval);
+  }, [activeTimers]); // Add activeTimers as a dependency
+
+
+
 
   // Firebase auth state observer
   useEffect(() => {
@@ -731,94 +833,149 @@ const MoodDashboard = () => {
     getNotifications();
   }, [user]);
 
- // Effect to generate personalized challenges based on PHQ-9 score
-useEffect(() => {
-  if (!phq9Data) return;
+  // Effect to generate personalized challenges based on PHQ-9 score
+  // Effect to generate personalized challenges based on PHQ-9 score
+  useEffect(() => {
+    if (!phq9Data) return;
 
-  // Challenge logic based on PHQ-9 score
-  let personalized = [];
+    // Challenge logic based on PHQ-9 score
+    let personalized = [];
 
-  if (phq9Data.score >= 15) {
-    personalized = [
-      {
-        title: "Professional Support",
-        description: "Connect with a mental health professional for guidance",
-        type: "professional",
-        severity: "high"
-      },
-      {
-        title: "Daily Check-ins",
-        description: "Set reminders to check in with yourself 3 times a day",
-        type: "behavior",
-        severity: "high"
-      }
-    ];
-  } else if (phq9Data.score >= 10) {
-    personalized = [
-      {
-        title: "Mindfulness Practice",
-        description: "10-minute guided meditation every morning",
-        type: "mindfulness",
-        severity: "medium"
-      },
-      {
-        title: "Social Connection",
-        description: "Reach out to a friend or family member daily",
-        type: "social",
-        severity: "medium"
-      }
-    ];
-  } else if (phq9Data.score >= 5) {
-    personalized = [
-      {
-        title: "Gratitude Journal",
-        description: "Write down 3 things you're grateful for each day",
-        type: "gratitude",
-        severity: "low"
-      },
-      {
-        title: "Physical Activity",
-        description: "20-minute walk or exercise every day",
-        type: "physical",
-        severity: "low"
-      }
-    ];
-  }
-
-  setPersonalizedChallenges(personalized);
-
-  // Save to user's document in Firestore
-  if (personalized.length > 0) {
-    const updateUserDoc = async () => {
-      const userDocRef = doc(db, 'users', user.uid);
-      await updateDoc(userDocRef, {
-        personalizedChallenges: personalized
-      });
-    };
-    
-    updateUserDoc();
-  }
-}, [phq9Data, user]);
-
-// Effect to load personalized challenges from Firestore
-useEffect(() => {
-  if (!user) return;
-
-  const loadPersonalizedChallenges = async () => {
-    try {
-      const userDoc = await doc(db, 'users', user.uid);
-      const userSnap = await getDoc(userDoc);
-
-      if (userSnap.exists() && userSnap.data().personalizedChallenges) {
-        setPersonalizedChallenges(userSnap.data().personalizedChallenges);
-      }
-    } catch (error) {
-      console.error('Error loading personalized challenges:', error);
+    if (phq9Data.score >= 15) {
+      personalized = [
+        {
+          id: Date.now() + 1, // Add unique ID
+          title: "Professional Support",
+          description: "Connect with a mental health professional for guidance",
+          type: "professional",
+          severity: "high",
+          activity: "Schedule therapist consultation",
+          duration: 10,
+          instructions: "Identify 3 potential therapists and contact them today."
+        },
+        {
+          id: Date.now() + 2, // Add unique ID
+          title: "Grounding Technique",
+          description: "Use 5-4-3-2-1 method to reduce anxiety",
+          type: "grounding",
+          severity: "high",
+          activity: "5-4-3-2-1 Sensory Exercise",
+          duration: 10,
+          instructions: "Name 5 things you see, 4 things you can touch, 3 things you hear, 2 things you smell, 1 thing you taste."
+        },
+        {
+          id: Date.now() + 3, // Add unique ID
+          title: "Breath Awareness",
+          description: "Controlled breathing to calm nervous system",
+          type: "breathing",
+          severity: "high",
+          activity: "Box Breathing Exercise",
+          duration: 10,
+          instructions: "Inhale for 4 seconds, hold for 4, exhale for 4, hold for 4. Repeat for 10 minutes."
+        }
+      ];
+    } else if (phq9Data.score >= 10) {
+      personalized = [
+        {
+          id: Date.now() + 1, // Add unique ID
+          title: "Mindfulness Practice",
+          description: "10-minute guided meditation every morning",
+          type: "mindfulness",
+          severity: "medium",
+          activity: "Body Scan Meditation",
+          duration: 10,
+          instructions: "Lie down and focus attention on each body part from toes to head, noticing sensations without judgment."
+        },
+        {
+          id: Date.now() + 2, // Add unique ID
+          title: "Social Connection",
+          description: "Reach out to a friend or family member daily",
+          type: "social",
+          severity: "medium",
+          activity: "Meaningful Conversation",
+          duration: 10,
+          instructions: "Call someone you care about and ask how they're doing without mentioning yourself."
+        },
+        {
+          id: Date.now() + 3, // Add unique ID
+          title: "Gratitude Journal",
+          description: "Write down 3 things you're grateful for each day",
+          type: "gratitude",
+          severity: "medium",
+          activity: "Gratitude Reflection",
+          duration: 10,
+          instructions: "Write down 3 specific things you're grateful for and why they matter to you."
+        }
+      ];
+    } else if (phq9Data.score >= 5) {
+      personalized = [
+        {
+          id: Date.now() + 1, // Add unique ID
+          title: "Physical Activity",
+          description: "20-minute walk or exercise every day",
+          type: "physical",
+          severity: "low",
+          activity: "Gentle Movement",
+          duration: 10,
+          instructions: "Perform 5 minutes of stretching followed by 5 minutes of walking at a comfortable pace."
+        },
+        {
+          id: Date.now() + 2, // Add unique ID
+          title: "Positive Affirmations",
+          description: "Reinforce positive self-talk",
+          type: "affirmation",
+          severity: "low",
+          activity: "Affirmation Practice",
+          duration: 10,
+          instructions: "Stand in front of a mirror and repeat 5 positive affirmations about yourself with confidence."
+        },
+        {
+          id: Date.now() + 3, // Add unique ID
+          title: "Nature Connection",
+          description: "Spend time outdoors to improve mood",
+          type: "nature",
+          severity: "low",
+          activity: "Nature Observation",
+          duration: 10,
+          instructions: "Sit outside and observe 5 natural elements (trees, clouds, birds, etc.) without distractions."
+        }
+      ];
     }
-  };
 
-  loadPersonalizedChallenges();
-}, [user]);
+    setPersonalizedChallenges(personalized);
+
+    // Save to user's document in Firestore
+    if (personalized.length > 0) {
+      const updateUserDoc = async () => {
+        const userDocRef = doc(db, 'users', user.uid);
+        await updateDoc(userDocRef, {
+          personalizedChallenges: personalized
+        });
+      };
+
+      updateUserDoc();
+    }
+  }, [phq9Data, user]);
+
+  // Effect to load personalized challenges from Firestore
+  useEffect(() => {
+    if (!user) return;
+
+    const loadPersonalizedChallenges = async () => {
+      try {
+        const userDoc = await doc(db, 'users', user.uid);
+        const userSnap = await getDoc(userDoc);
+
+        if (userSnap.exists() && userSnap.data().personalizedChallenges) {
+          setPersonalizedChallenges(userSnap.data().personalizedChallenges);
+        }
+      } catch (error) {
+        console.error('Error loading personalized challenges:', error);
+      }
+    };
+
+    loadPersonalizedChallenges();
+  }, [user]);
 
   // Mobile menu handlers
   const handleMobileMenuOpen = (event) => {
@@ -867,113 +1024,167 @@ useEffect(() => {
     }
   };
 
+
   // PHQ-9 submission handler
-  // PHQ-9 submission handler
-const handlePhq9Submit = async (responses) => {
-  if (!user) return;
+  const handlePhq9Submit = async (responses) => {
+    if (!user) return;
 
-  const totalScore = responses.reduce((sum, score) => sum + score, 0);
+    const totalScore = responses.reduce((sum, score) => sum + score, 0);
 
-  try {
-    // Generate personalized challenges based on score
-    let personalized = [];
-    
-    if (totalScore >= 15) {
-      personalized = [
-        {
-          title: "Professional Support",
-          description: "Connect with a mental health professional for guidance",
-          type: "professional",
-          severity: "high"
-        },
-        {
-          title: "Daily Check-ins",
-          description: "Set reminders to check in with yourself 3 times a day",
-          type: "behavior",
-          severity: "high"
-        }
-      ];
-    } else if (totalScore >= 10) {
-      personalized = [
-        {
-          title: "Mindfulness Practice",
-          description: "10-minute guided meditation every morning",
-          type: "mindfulness",
-          severity: "medium"
-        },
-        {
-          title: "Social Connection",
-          description: "Reach out to a friend or family member daily",
-          type: "social",
-          severity: "medium"
-        }
-      ];
-    } else if (totalScore >= 5) {
-      personalized = [
-        {
-          title: "Gratitude Journal",
-          description: "Write down 3 things you're grateful for each day",
-          type: "gratitude",
-          severity: "low"
-        },
-        {
-          title: "Physical Activity",
-          description: "20-minute walk or exercise every day",
-          type: "physical",
-          severity: "low"
-        }
-      ];
-    }
+    try {
+      // Generate personalized challenges based on score
+      let personalized = [];
 
-    // Save PHQ-9 responses to Firestore
-    const phq9ResponseRef = await addDoc(collection(db, 'users', user.uid, 'phq9_responses'), {
-      responses,
-      score: totalScore,
-      timestamp: new Date().toISOString(),
-      moodHistory: filteredMoodEntries
-    });
+      if (totalScore >= 15) {
+        personalized = [
+          {
+            id: Date.now() + 1, // Add unique ID
+            title: "Professional Support",
+            description: "Connect with a mental health professional for guidance",
+            type: "professional",
+            severity: "high",
+            activity: "Schedule therapist consultation",
+            duration: 10, // Duration in minutes
+            instructions: "Identify 3 potential therapists and contact them today."
+          },
+          {
+            id: Date.now() + 2, // Add unique ID
+            title: "Grounding Technique",
+            description: "Use 5-4-3-2-1 method to reduce anxiety",
+            type: "grounding",
+            severity: "high",
+            activity: "5-4-3-2-1 Sensory Exercise",
+            duration: 10,
+            instructions: "Name 5 things you see, 4 things you can touch, 3 things you hear, 2 things you smell, 1 thing you taste."
+          },
+          {
+            id: Date.now() + 3, // Add unique ID
+            title: "Breath Awareness",
+            description: "Controlled breathing to calm nervous system",
+            type: "breathing",
+            severity: "high",
+            activity: "Box Breathing Exercise",
+            duration: 10,
+            instructions: "Inhale for 4 seconds, hold for 4, exhale for 4, hold for 4. Repeat for 10 minutes."
+          }
+        ];
+      } else if (totalScore >= 10) {
+        personalized = [
+          {
+            id: Date.now() + 1, // Add unique ID
+            title: "Mindfulness Practice",
+            description: "10-minute guided meditation every morning",
+            type: "mindfulness",
+            severity: "medium",
+            activity: "Body Scan Meditation",
+            duration: 10,
+            instructions: "Lie down and focus attention on each body part from toes to head, noticing sensations without judgment."
+          },
+          {
+            id: Date.now() + 2, // Add unique ID
+            title: "Social Connection",
+            description: "Reach out to a friend or family member daily",
+            type: "social",
+            severity: "medium",
+            activity: "Meaningful Conversation",
+            duration: 10,
+            instructions: "Call someone you care about and ask how they're doing without mentioning yourself."
+          },
+          {
+            id: Date.now() + 3, // Add unique ID
+            title: "Gratitude Journal",
+            description: "Write down 3 things you're grateful for each day",
+            type: "gratitude",
+            severity: "medium",
+            activity: "Gratitude Reflection",
+            duration: 10,
+            instructions: "Write down 3 specific things you're grateful for and why they matter to you."
+          }
+        ];
+      } else if (totalScore >= 5) {
+        personalized = [
+          {
+            id: Date.now() + 1, // Add unique ID
+            title: "Physical Activity",
+            description: "20-minute walk or exercise every day",
+            type: "physical",
+            severity: "low",
+            activity: "Gentle Movement",
+            duration: 10,
+            instructions: "Perform 5 minutes of stretching followed by 5 minutes of walking at a comfortable pace."
+          },
+          {
+            id: Date.now() + 2, // Add unique ID
+            title: "Positive Affirmations",
+            description: "Reinforce positive self-talk",
+            type: "affirmation",
+            severity: "low",
+            activity: "Affirmation Practice",
+            duration: 10,
+            instructions: "Stand in front of a mirror and repeat 5 positive affirmations about yourself with confidence."
+          },
+          {
+            id: Date.now() + 3, // Add unique ID
+            title: "Nature Connection",
+            description: "Spend time outdoors to improve mood",
+            type: "nature",
+            severity: "low",
+            activity: "Nature Observation",
+            duration: 10,
+            instructions: "Sit outside and observe 5 natural elements (trees, clouds, birds, etc.) without distractions."
+          }
+        ];
+      }
 
-    // Save personalized challenges to Firestore
-    if (personalized.length > 0) {
-      await updateDoc(doc(db, 'users', user.uid, 'phq9_responses', phq9ResponseRef.id), {
-        personalizedChallenges: personalized
-      });
-    }
-
-    // Update user's profile with PHQ-9 status
-    const userDocRef = doc(db, 'users', user.uid);
-    await updateDoc(userDocRef, {
-      lastPhq9Date: new Date().toISOString(),
-      phq9History: [...(user?.phq9History || []), {
+      // Save PHQ-9 responses to Firestore
+      const phq9ResponseRef = await addDoc(collection(db, 'users', user.uid, 'phq9_responses'), {
+        responses,
         score: totalScore,
-        timestamp: new Date().toISOString()
-      }]
-    });
+        timestamp: new Date().toISOString(),
+        moodHistory: filteredMoodEntries
+      });
 
-    // Store PHQ-9 data locally
-    setPhq9Data({
-      score: totalScore,
-      responses,
-      timestamp: new Date().toISOString()
-    });
+      // Save personalized challenges to Firestore
+      if (personalized.length > 0) {
+        await updateDoc(doc(db, 'users', user.uid, 'phq9_responses', phq9ResponseRef.id), {
+          personalizedChallenges: personalized
+        });
+      }
 
-    // Add mood alert for low scores
-    if (totalScore >= 15) {
+      // Update user's profile with PHQ-9 status
+      const userDocRef = doc(db, 'users', user.uid);
       await updateDoc(userDocRef, {
-        moodAlerts: [...(user?.moodAlerts || []), {
-          date: new Date().toISOString(),
-          days: lowMoodDays,
-          message: `Your PHQ-9 score indicates moderate to severe depression. Consider professional support immediately.`
+        lastPhq9Date: new Date().toISOString(),
+        phq9History: [...(user?.phq9History || []), {
+          score: totalScore,
+          timestamp: new Date().toISOString()
         }]
       });
+
+      // Store PHQ-9 data locally
+      setPhq9Data({
+        score: totalScore,
+        responses,
+        timestamp: new Date().toISOString()
+      });
+
+      // Add mood alert for low scores
+      if (totalScore >= 15) {
+        await updateDoc(userDocRef, {
+          moodAlerts: [...(user?.moodAlerts || []), {
+            date: new Date().toISOString(),
+            days: lowMoodDays,
+            message: `Your PHQ-9 score indicates moderate to severe depression. Consider professional support immediately.`
+          }]
+        });
+      }
+
+    } catch (error) {
+      console.error('Error saving PHQ-9 response:', error);
     }
+  };
 
-  } catch (error) {
-    console.error('Error saving PHQ-9 response:', error);
-  }
-};
 
- 
   const defaultChallenges = [
     {
       title: '30-Day Mindfulness Challenge',
@@ -1319,7 +1530,6 @@ const handlePhq9Submit = async (responses) => {
               </Box>
 
               {/* PHQ-9 Status Card */}
-             // PHQ-9 Status Card with action button
               <Box sx={{ mt: 3, px: 2, py: 3, bgcolor: '#e7f3ed', borderRadius: 2 }}>
                 <Box display="flex" justifyContent="space-between" alignItems="center">
                   <Box>
@@ -1369,12 +1579,15 @@ const handlePhq9Submit = async (responses) => {
             </StyledCard>
           </motion.div>
         </Box>
+
+
         {/* Active Challenges */}
         <Box sx={{ mt: { xs: 4, sm: 6, md: 8 }, mb: { xs: 2, sm: 4, md: 6 } }}>
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.5, delay: 0.3 }}
+            key={completedChallenges.length} // Use length to force re-render
           >
             <Typography variant={{ xs: 'h6', sm: 'h5', md: 'h5' }} component="h2" color="#0d1b14" fontWeight="bold" gutterBottom>
               Active Challenges
@@ -1382,42 +1595,103 @@ const handlePhq9Submit = async (responses) => {
 
             <Grid container spacing={{ xs: 2, sm: 3 }}>
               {personalizedChallenges.length > 0 ? (
-                personalizedChallenges.map((challenge, index) => (
-                  <Grid item xs={12} sm={6} md={6} key={index}>
-                    <StyledCard sx={{ p: { xs: 2, sm: 3 }, borderLeft: `4px solid ${challenge.severity === 'high' ? '#f44336' : challenge.severity === 'medium' ? '#ff9800' : '#4caf50'}` }}>
-                      <Typography
-                        variant={isMobile ? "h6" : "h6"}
-                        fontWeight="bold"
-                        color="#0d1b14"
-                        gutterBottom
-                      >
-                        {challenge.title}
-                      </Typography>
-                      <Typography color="#4c9a73" mb={2} fontSize={{ xs: 12, sm: 14 }}>
-                        {challenge.description}
-                      </Typography>
-                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <Chip
-                          label={challenge.type}
-                          size="small"
-                          sx={{ backgroundColor: '#e7f3ed', color: '#0d1b14' }}
-                        />
-                        <Button
-                          variant="contained"
-                          size="small"
-                          sx={{
-                            borderRadius: '8px',
-                            bgcolor: '#4c9a73',
-                            '&:hover': { bgcolor: '#3a9b7a' }
-                          }}
-                        >
-                          Start
-                        </Button>
-                      </Box>
-                    </StyledCard>
-                  </Grid>
-                ))
+                // Only show challenges that are not completed
+                personalizedChallenges
+                  .filter(challenge => !completedChallenges.includes(challenge.id))
+                  .map((challenge, index) => {
+                    // Check if this challenge has an active timer
+                    const timer = activeTimers[challenge.id];
+                    const isTimerActive = timer && timer.timeRemaining > 0;
+
+                    return (
+                      <Grid item xs={12} sm={6} md={6} key={`${challenge.id}-${index}`}>
+                        <StyledCard sx={{
+                          p: { xs: 2, sm: 3 },
+                          borderLeft: `4px solid ${challenge.severity === 'high' ? '#f44336' : challenge.severity === 'medium' ? '#ff9800' : '#4caf50'}`,
+                          transition: 'all 0.3s ease'
+                        }}>
+                          <Typography
+                            variant={isMobile ? "h6" : "h6"}
+                            fontWeight="bold"
+                            color="#0d1b14"
+                            gutterBottom
+                          >
+                            {challenge.title}
+                          </Typography>
+                          <Typography color="#4c9a73" mb={2} fontSize={{ xs: 12, sm: 14 }}>
+                            {challenge.description}
+                          </Typography>
+
+                          {/* Timer Section */}
+                          {isTimerActive && (
+                            <Box sx={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'space-between',
+                              mb: 2,
+                              p: 1,
+                              bgcolor: '#f0f8f5',
+                              borderRadius: 1
+                            }}>
+                              <Box display="flex" alignItems="center">
+                                <SvgIcon fontSize="small" sx={{ mr: 0.5, color: '#4c9a73' }}>
+                                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
+                                    <path d="M8 3.5a.5.5 0 0 0-1 0V9a.5.5 0 0 0 .252.434l3.5 2a.5.5 0 0 0 .496-.868L8 8.71V3.5z" />
+                                    <path d="M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm7-8A7 7 0 1 1 1 8a7 7 0 0 1 14 0z" />
+                                  </svg>
+                                </SvgIcon>
+                                <Typography color="#4c9a73" fontWeight="bold">
+                                  Time remaining: {formatTime(timer.timeRemaining)}
+                                </Typography>
+                              </Box>
+                              <Button
+                                size="small"
+                                onClick={() => setActiveTimers(prev => ({ ...prev, [challenge.id]: null }))}
+                                sx={{
+                                  color: '#f44336',
+                                  fontWeight: 'bold',
+                                  textTransform: 'none',
+                                  p: 0.5,
+                                  minWidth: 'unset'
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </Box>
+                          )}
+
+                          {isTimerActive ? (
+                            <Typography variant="body2" color="#4c9a73" sx={{ fontWeight: 'bold', textAlign: 'center' }}>
+                              Challenge in progress...
+                            </Typography>
+                          ) : (
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <Chip
+                                label={challenge.type}
+                                size="small"
+                                sx={{ backgroundColor: '#e7f3ed', color: '#0d1b14' }}
+                              />
+                              <Button
+                                variant="contained"
+                                size="small"
+                                onClick={() => startTimer(challenge.id, challenge.duration)}
+                                sx={{
+                                  borderRadius: '8px',
+                                  bgcolor: '#4c9a73',
+                                  '&:hover': { bgcolor: '#3a9b7a' }
+                                }}
+                              >
+                                Start
+                              </Button>
+                            </Box>
+                          )}
+                        </StyledCard>
+                      </Grid>
+                    );
+                  })
+                  .filter(Boolean) // Filter out any null entries
               ) : (
+                // Default challenges when no personalized challenges exist
                 defaultChallenges.map((challenge, index) => (
                   <Grid item xs={12} sm={6} md={6} key={index}>
                     <StyledCard sx={{ p: { xs: 2, sm: 3 } }}>
